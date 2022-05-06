@@ -20,3 +20,15 @@ pybasic/test/units/*
 .venv_pybasic/
 
 .ipynb_checkpoints
+/ExampleData/
+/ExampleData/Timelapse_brightfield/
+/ExampleData/Timelapse_nanog/
+/ExampleData/WSI_brain/
+/ExampleData/WSI_brain_4/
+/ExampleData/WSI_brain_4/C3-BrainSection0001.tif
+/ExampleData/WSI_brain_4/C3-BrainSection0002.tif
+/ExampleData/WSI_brain_4/C3-BrainSection0003.tif
+/ExampleData/WSI_brain_4/C3-BrainSection0004.tif
+/figures/
+/Notebooks/
+/pybasic/
