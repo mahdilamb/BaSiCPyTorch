@@ -137,7 +137,7 @@ def inexact_alm_rspca_l1(images, weight: Optional[torch.Tensor], lambda_flatfiel
         converged = stopCriterion < optimization_tolerance or iter >= max_iterations
 
     A_offset = torch.squeeze(A_offset)
-    A_offset = A_offset + B1_offset * reshape_fortran(W_idct_hat, (-1,))
+    A_offset = A_offset.add_(B1_offset * reshape_fortran(W_idct_hat, (-1,)))
 
     return A1_hat, E1_hat, A_offset
 
@@ -180,7 +180,7 @@ def basic(image_stack: torch.Tensor, lambda_flatfield: float = 0,
     meanD = meanD.div_(meanD.mean())
     W_meanD = dct2d(meanD.t())
     if lambda_flatfield == 0:
-        lambda_flatfield = torch.sum(torch.abs(W_meanD)) / 400 * 0.5
+        lambda_flatfield = W_meanD.abs().sum() / 400 * 0.5
     if lambda_darkfield == 0:
         lambda_darkfield = lambda_flatfield * 0.2
     D = D.sort(dim=2)[0]
@@ -205,21 +205,21 @@ def basic(image_stack: torch.Tensor, lambda_flatfield: float = 0,
         XE = reshape_fortran(X_k_E, (nrows, ncols, -1))
         darkfield_current = XAoffset = reshape_fortran(X_k_Aoffset, (nrows, ncols))
         XE_norm = XE.div_(XA.mean(dim=(0, 1)))
-        weight = torch.ones_like(XE_norm, device=device, dtype=precision).div_(torch.abs(XE_norm) + eplson)
-        weight = weight * weight.numel() / weight.sum()
+        weight = torch.ones_like(XE_norm, device=device, dtype=precision).div_(XE_norm.abs().add_(eplson))
+        weight = weight.mul_(weight.numel() / weight.sum())
 
         temp = XA.mean(dim=2).sub_(XAoffset)
         flatfield_current = temp.div_(temp.mean())
 
-        mad_flatfield = torch.sum(torch.abs(flatfield_current - flatfield_last)).div_(
-            torch.sum(torch.abs(flatfield_last)))
-        temp_diff = torch.sum(torch.abs(darkfield_current - darkfield_last))
+        mad_flatfield = (flatfield_current - flatfield_last).abs().sum().div_(
+            flatfield_last.abs().sum())
+        temp_diff = (darkfield_current - darkfield_last).abs().sum()
         if temp_diff < 1e-7:
             mad_darkfield = torch.zeros(1, device=device, dtype=precision)
 
         else:
-            mad_darkfield = temp_diff / torch.maximum(torch.sum(torch.abs(darkfield_last)),
-                                                      torch.tensor(1e-6, device=device, dtype=precision))
+            mad_darkfield = temp_diff.div_(torch.maximum(darkfield_last.abs().sum(),
+                                                         torch.tensor(1e-6, device=device, dtype=precision)))
         flatfield_last = flatfield_current
         darkfield_last = darkfield_current
         if torch.maximum(mad_flatfield,
@@ -227,11 +227,11 @@ def basic(image_stack: torch.Tensor, lambda_flatfield: float = 0,
                 reweighting_iter >= max_reweight_iterations:
             flag_reweighting = False
 
-    shading = XA.mean(dim=2) - XAoffset
+    shading = XA.mean(dim=2).sub_(XAoffset)
     flatfield = torch.squeeze(
         torchvision.transforms.Resize((original_size[0], original_size[1]))(torch.unsqueeze(shading, 0)))
 
-    flatfield = flatfield / flatfield.mean()
+    flatfield = flatfield.div_(flatfield.mean())
     if calculate_darkfield:
         darkfield = torch.squeeze(
             torchvision.transforms.Resize((original_size[0], original_size[1]))(torch.unsqueeze(XAoffset, 0)))
