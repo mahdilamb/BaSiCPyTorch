@@ -44,7 +44,7 @@ def inexact_alm_rspca_l1(images, weight: Optional[torch.Tensor], lambda_flatfiel
     d_norm = torch.linalg.norm(images, ord='fro')
 
     A_offset = torch.zeros((m, 1), device=device, dtype=precision)
-    B1_uplimit = torch.min(images)
+    B1_uplimit = images.min()
     B1_offset = 0
     A_inmask = torch.zeros((p, q), device=device, dtype=precision)
     A_inmask[int(np.round(p / 6) - 1): int(np.round(p * 5 / 6)), int(np.round(q / 6) - 1): int(np.round(q * 5 / 6))] = 1
@@ -106,7 +106,7 @@ def inexact_alm_rspca_l1(images, weight: Optional[torch.Tensor], lambda_flatfiel
             # limit B1_offset: 0<B1_offset<B1_uplimit
 
             B1_offset = torch.maximum(B1_offset, ZERO)
-            B1_offset = torch.minimum(B1_offset, W_idct_hat.mean() * 1 / B1_uplimit)
+            B1_offset = torch.minimum(B1_offset, B1_uplimit / W_idct_hat.mean())
 
             B_offset = B1_offset * reshape_fortran(W_idct_hat, (-1,)) * (-1)
 
@@ -150,7 +150,7 @@ def basic(image_stack: torch.Tensor, lambda_flatfield: float = 0,
           working_size: int = 128,
           max_reweight_iterations: int = 10,
           eplson: float = 0.1,
-          reweight_tolerance: float = 1e-3, precision: torch.dtype = torch.float32) -> Tuple[
+          reweight_tolerance: float = 1e-3, precision: torch.dtype = torch.float32, device=None) -> Tuple[
     torch.Tensor, torch.Tensor]:
     """
     Calculate the flatfield and darkfield aberrations
@@ -170,18 +170,18 @@ def basic(image_stack: torch.Tensor, lambda_flatfield: float = 0,
     Returns: a tuple of the flatfield and darkfield
 
     """
-    device = image_stack.device
+    device = device or image_stack.device
     nrows = ncols = working_size
     original_size = image_stack[0].shape
 
-    D = torchvision.transforms.Resize((working_size, working_size))(image_stack).permute(1, 2, 0)
+    D = torchvision.transforms.Resize((working_size, working_size))(image_stack).permute(1, 2, 0).to(device)
 
     meanD = D.mean(dim=2)
     meanD = meanD.div_(meanD.mean())
     W_meanD = dct2d(meanD.t())
-    if lambda_flatfield == 0:
+    if lambda_flatfield <= 0:
         lambda_flatfield = W_meanD.abs().sum() / 400 * 0.5
-    if lambda_darkfield == 0:
+    if lambda_darkfield <= 0:
         lambda_darkfield = lambda_flatfield * 0.2
     D = D.sort(dim=2)[0]
     XAoffset = torch.zeros((nrows, ncols), device=device, dtype=precision)
@@ -247,7 +247,7 @@ def correct_illumination(images, flatfield_img: Optional[torch.Tensor] = None,
     Args:
         images: the input images
         flatfield_img: the flatfield image to use for correction. If None provided, then it will be calculated
-        darkfield_img: the farkfield image to use for correction
+        darkfield_img: the darkfield image to use for correction
         calculate_kwargs: arguments that will be passed to the basic function (includes an additional 'in_place' argument)
 
     Returns: a tensor with the corrected image
@@ -257,5 +257,5 @@ def correct_illumination(images, flatfield_img: Optional[torch.Tensor] = None,
     if flatfield_img is None:
         flatfield_img, darkfield_img = basic(images, **calculate_kwargs)
     if in_place:
-        return images.sub_(darkfield_img).div_(flatfield_img)
+        return images.to(flatfield_img.device).sub_(darkfield_img).div_(flatfield_img)
     return (images - darkfield_img) / flatfield_img
