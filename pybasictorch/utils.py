@@ -1,13 +1,17 @@
 import os
 from fnmatch import fnmatch
+from typing import Callable
 
 import numpy as np
 import torch
-from tifffile import imread
 from torch_dct import dct, idct
 
 
-def load_data(directory: str, pattern: str = "*.tif*") -> torch.Tensor:
+def load_data(directory: str, pattern: str = "*.tif*", reader: Callable[[str], np.ndarray] = None) -> torch.Tensor:
+    if reader is None:
+        from tifffile import imread
+        reader = imread
+
     """
     Load a dataset into a tensor. Assumes that the input files
     Args:
@@ -17,7 +21,7 @@ def load_data(directory: str, pattern: str = "*.tif*") -> torch.Tensor:
     Returns: a torch tensor
 
     """
-    return torch.tensor(np.asarray([imread(image) for image in sorted(
+    return torch.tensor(np.asarray([reader(image) for image in sorted(
         os.path.join(directory, file) for file in os.listdir(directory) if fnmatch(file, pattern))]) * 1.0)
 
 
