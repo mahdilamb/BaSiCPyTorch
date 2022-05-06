@@ -32,3 +32,5 @@ pybasic/test/units/*
 /figures/
 /Notebooks/
 /pybasic/
+/.idea/
+/tests/

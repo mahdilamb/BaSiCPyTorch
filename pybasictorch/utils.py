@@ -36,7 +36,7 @@ def dct2d(mtrx: torch.Tensor):
     """
     # Check if input object is 2D.
     if mtrx.ndim != 2:
-        raise ValueError("Passed object should be a matrix or a numpy array with dimension of two.")
+        raise ValueError(f"Tensor must be 2D. Matrix is {mtrx.ndim}D")
 
     return dct(dct(mtrx.t(), norm='ortho').t(), norm='ortho')
 
@@ -57,6 +57,23 @@ def idct2d(mtrx: torch.Tensor):
 
     # Check if input object is 2D.
     if mtrx.ndim != 2:
-        raise ValueError("Passed object should be a matrix or a numpy array with dimension of two.")
+        raise ValueError(f"Tensor must be 2D. Matrix is {mtrx.ndim}D")
 
     return idct(idct(mtrx.t(), norm='ortho').t(), norm='ortho')
+
+
+def reshape_fortran(x, shape):
+    """
+    Reshape a tensor with fortran ordering
+    Original code posted on StackOverflow https://stackoverflow.com/a/63964246/979591
+    Usage licenced by CC BY-SA 4.0
+    Args:
+        x: the input tensor
+        shape: the shape of the required shape
+
+    Returns: the reshaped tensor
+
+    """
+    if len(x.shape) > 0:
+        x = x.permute(*reversed(range(len(x.shape))))
+    return x.reshape(*reversed(shape)).permute(*reversed(range(len(shape))))

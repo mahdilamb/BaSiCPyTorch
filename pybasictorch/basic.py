@@ -1,11 +1,10 @@
-from typing import Optional
+from typing import Optional, Tuple
 
 import numpy as np
 import torch
 import torchvision.transforms
-from tifffile import imsave
 
-from .utils import dct2d, idct2d
+from .utils import dct2d, idct2d, reshape_fortran
 
 
 def _shrinkageOperator(matrix, epsilon):
@@ -15,12 +14,6 @@ def _shrinkageOperator(matrix, epsilon):
     temp2[temp2 > 0] = 0
     res = temp1 + temp2
     return res
-
-
-def reshape_fortran(x, shape):
-    if len(x.shape) > 0:
-        x = x.permute(*reversed(range(len(x.shape))))
-    return x.reshape(*reversed(shape)).permute(*reversed(range(len(shape))))
 
 
 def inexact_alm_rspca_l1(images, weight: Optional[torch.Tensor], lambda_flatfield: float,
@@ -93,7 +86,7 @@ def inexact_alm_rspca_l1(images, weight: Optional[torch.Tensor], lambda_flatfiel
         E1_hat = _shrinkageOperator(E1_hat, weight / (ent1 * mu))
 
         R1 = images - E1_hat
-        A1_coeff = (R1.mean(dim=0) / R1.mean())
+        A1_coeff = R1.mean(dim=0) / R1.mean()
         A1_coeff[A1_coeff < 0] = 0
 
         if darkfield:
@@ -152,7 +145,7 @@ def inexact_alm_rspca_l1(images, weight: Optional[torch.Tensor], lambda_flatfiel
     return A1_hat, E1_hat, A_offset
 
 
-def basic(images: torch.Tensor, lambda_flatfield: float = 0,
+def basic(image_stack: torch.Tensor, lambda_flatfield: float = 0,
           max_iterations: int = 500,
           optimization_tolerance: float = 1e-6,
           darkfield: bool = False,
@@ -160,12 +153,29 @@ def basic(images: torch.Tensor, lambda_flatfield: float = 0,
           working_size: int = 128,
           max_reweight_iterations: int = 10,
           eplson: float = 0.1,
-          reweight_tolerance: float = 1e-3, ):
-    device = images.device
-    nrows = ncols = working_size
-    _saved_size = images[0].shape
+          reweight_tolerance: float = 1e-3, ) -> Tuple[torch.Tensor, torch.Tensor]:
+    """
+    Calculate the flatfield and darkfield aberrations
+    Args:
+        image_stack: the image stack. The tensor should be a series of 2D images (i.e. will have a total of 3 dimensions)
+        lambda_flatfield: The flatfield regularization parameter. If 0 or negative, will be estimated
+        max_iterations:maximum number of iterations in optimisation
+        optimization_tolerance: error tolerance
+        darkfield: Whether to calculate darkfield as well
+        lambda_darkfield:The darkfield regularization parameter. If 0 or negative, will be estimated
+        working_size: the size the images are resized internal
+        max_reweight_iterations:
+        eplson: reweighting parameter
+        reweight_tolerance: reweight tolerance
 
-    D = torchvision.transforms.Resize((working_size, working_size))(images).permute(1, 2, 0)
+    Returns: a tuple of the flatfield and darkfield
+
+    """
+    device = image_stack.device
+    nrows = ncols = working_size
+    _saved_size = image_stack[0].shape
+
+    D = torchvision.transforms.Resize((working_size, working_size))(image_stack).permute(1, 2, 0)
 
     meanD = D.mean(dim=2)
     meanD = meanD / meanD.mean()
@@ -229,6 +239,16 @@ def basic(images: torch.Tensor, lambda_flatfield: float = 0,
 
 def correct_illumination(images, flatfield: Optional[torch.Tensor] = None,
                          darkfield: Optional[torch.Tensor] = None) -> torch.Tensor:
+    """
+    Correct the illumination of an image using the BaSiC algorithm
+    Args:
+        images: the input images
+        flatfield: the flatfield image to use for correction. If None provided, then it will be calculated
+        darkfield: the farkfield image to use for correction
+
+    Returns: a tensor with the corrected image
+
+    """
     if flatfield is None:
         flatfield, darkfield = basic(images)
     return (images - darkfield) / flatfield
