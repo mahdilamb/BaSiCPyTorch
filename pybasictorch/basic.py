@@ -13,7 +13,8 @@ def _shrinkageOperator(matrix: torch.Tensor, epsilon: torch.Tensor):
 
 
 def inexact_alm_rspca_l1(images, weight: Optional[torch.Tensor], lambda_flatfield: float,
-                         lambda_darkfield: float, darkfield: bool, optimization_tolerance: float, max_iterations: int,
+                         lambda_darkfield: float, calculate_darkfield: bool, optimization_tolerance: float,
+                         max_iterations: int,
                          device, precision=torch.float32):
     if weight is not None and weight.shape != images.shape:
         raise ValueError('weight matrix has different size than input sequence')
@@ -85,7 +86,7 @@ def inexact_alm_rspca_l1(images, weight: Optional[torch.Tensor], lambda_flatfiel
         A1_coeff = R1.mean(dim=0) / R1.mean()
         A1_coeff[A1_coeff < 0] = 0
 
-        if darkfield:
+        if calculate_darkfield:
             validA1coeff_idx = torch.where(A1_coeff < 1)
             B1_coeff = torch.mean(
                 R1[reshape_fortran(W_idct_hat, (-1,)) > W_idct_hat.mean() - 1e-6][:, validA1coeff_idx[0]],
@@ -144,7 +145,7 @@ def inexact_alm_rspca_l1(images, weight: Optional[torch.Tensor], lambda_flatfiel
 def basic(image_stack: torch.Tensor, lambda_flatfield: float = 0,
           max_iterations: int = 500,
           optimization_tolerance: float = 1e-6,
-          darkfield: bool = False,
+          calculate_darkfield: bool = False,
           lambda_darkfield: float = 0,
           working_size: int = 128,
           max_reweight_iterations: int = 10,
@@ -159,7 +160,7 @@ def basic(image_stack: torch.Tensor, lambda_flatfield: float = 0,
         lambda_flatfield: The flatfield regularization parameter. If 0 or negative, will be estimated
         max_iterations:maximum number of iterations in optimisation
         optimization_tolerance: error tolerance
-        darkfield: Whether to calculate darkfield as well
+        calculate_darkfield: Whether to calculate darkfield as well
         lambda_darkfield:The darkfield regularization parameter. If 0 or negative, will be estimated
         working_size: the size the images are resized internal
         max_reweight_iterations:
@@ -171,12 +172,12 @@ def basic(image_stack: torch.Tensor, lambda_flatfield: float = 0,
     """
     device = image_stack.device
     nrows = ncols = working_size
-    _saved_size = image_stack[0].shape
+    original_size = image_stack[0].shape
 
     D = torchvision.transforms.Resize((working_size, working_size))(image_stack).permute(1, 2, 0)
 
     meanD = D.mean(dim=2)
-    meanD = meanD / meanD.mean()
+    meanD = meanD.div_(meanD.mean())
     W_meanD = dct2d(meanD.t())
     if lambda_flatfield == 0:
         lambda_flatfield = torch.sum(torch.abs(W_meanD)) / 400 * 0.5
@@ -194,22 +195,24 @@ def basic(image_stack: torch.Tensor, lambda_flatfield: float = 0,
         reweighting_iter += 1
 
         X_k_A, X_k_E, X_k_Aoffset = inexact_alm_rspca_l1(D, weight=weight, lambda_darkfield=lambda_darkfield,
-                                                         lambda_flatfield=lambda_flatfield, darkfield=darkfield,
+                                                         lambda_flatfield=lambda_flatfield,
+                                                         calculate_darkfield=calculate_darkfield,
                                                          optimization_tolerance=optimization_tolerance,
                                                          max_iterations=max_iterations, device=device,
                                                          precision=precision)
 
         XA = reshape_fortran(X_k_A, (nrows, ncols, -1))
         XE = reshape_fortran(X_k_E, (nrows, ncols, -1))
-        XAoffset = reshape_fortran(X_k_Aoffset, (nrows, ncols))
-        XE_norm = XE / XA.mean(dim=(0, 1))
-        weight = torch.ones_like(XE_norm, device=device, dtype=precision) / (torch.abs(XE_norm) + eplson)
-        weight = (weight * weight.numel() / weight.sum())
+        darkfield_current = XAoffset = reshape_fortran(X_k_Aoffset, (nrows, ncols))
+        XE_norm = XE.div_(XA.mean(dim=(0, 1)))
+        weight = torch.ones_like(XE_norm, device=device, dtype=precision).div_(torch.abs(XE_norm) + eplson)
+        weight = weight * weight.numel() / weight.sum()
 
-        temp = XA.mean(dim=2) - XAoffset
-        flatfield_current = temp / temp.mean()
-        darkfield_current = XAoffset
-        mad_flatfield = torch.sum(torch.abs(flatfield_current - flatfield_last)) / torch.sum(torch.abs(flatfield_last))
+        temp = XA.mean(dim=2).sub_(XAoffset)
+        flatfield_current = temp.div_(temp.mean())
+
+        mad_flatfield = torch.sum(torch.abs(flatfield_current - flatfield_last)).div_(
+            torch.sum(torch.abs(flatfield_last)))
         temp_diff = torch.sum(torch.abs(darkfield_current - darkfield_last))
         if temp_diff < 1e-7:
             mad_darkfield = torch.zeros(1, device=device, dtype=precision)
@@ -226,12 +229,12 @@ def basic(image_stack: torch.Tensor, lambda_flatfield: float = 0,
 
     shading = XA.mean(dim=2) - XAoffset
     flatfield = torch.squeeze(
-        torchvision.transforms.Resize((_saved_size[0], _saved_size[1]))(torch.unsqueeze(shading, 0)))
+        torchvision.transforms.Resize((original_size[0], original_size[1]))(torch.unsqueeze(shading, 0)))
 
     flatfield = flatfield / flatfield.mean()
-    if darkfield:
+    if calculate_darkfield:
         darkfield = torch.squeeze(
-            torchvision.transforms.Resize((_saved_size[0], _saved_size[1]))(torch.unsqueeze(XAoffset, 0)))
+            torchvision.transforms.Resize((original_size[0], original_size[1]))(torch.unsqueeze(XAoffset, 0)))
     else:
         darkfield = torch.zeros_like(flatfield, device=device, dtype=precision)
     return flatfield, darkfield
